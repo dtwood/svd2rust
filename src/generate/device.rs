@@ -9,7 +9,12 @@ use Target;
 use generate::{interrupt, peripheral};
 
 /// Whole device generation
-pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String) -> Result<Vec<Tokens>> {
+pub fn render(
+    d: &Device,
+    target: &Target,
+    nightly: bool,
+    device_x: &mut String,
+) -> Result<Vec<Tokens>> {
     let mut out = vec![];
 
     let doc = format!(
@@ -27,20 +32,24 @@ pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String)
         });
     }
 
-    if *target != Target::None && *target != Target::CortexM {
-        out.push(quote! {
-            #![cfg_attr(feature = "rt", feature(global_asm))]
-            #![cfg_attr(feature = "rt", feature(use_extern_macros))]
-            #![cfg_attr(feature = "rt", feature(used))]
-        });
+    match *target {
+        Target::Msp430 | Target::RISCV => {
+            out.push(quote! {
+                #![cfg_attr(feature = "rt", feature(global_asm))]
+                #![cfg_attr(feature = "rt", feature(use_extern_macros))]
+                #![cfg_attr(feature = "rt", feature(used))]
+            });
+        }
+        _ => {}
     }
 
     out.push(quote! {
         #![doc = #doc]
-        #![deny(missing_docs)]
-        #![deny(warnings)]
+        // #![deny(missing_docs)]
+        #![allow(dead_code)]
+        // #![deny(warnings)]
         #![allow(non_camel_case_types)]
-        #![no_std]
+        // #![no_std]
     });
 
     if nightly {
@@ -73,15 +82,13 @@ pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String)
                 extern crate riscv_rt;
             });
         }
+        Target::Ephy => {}
         Target::None => {}
     }
 
     out.push(quote! {
         extern crate bare_metal;
         extern crate vcell;
-
-        use core::ops::Deref;
-        use core::marker::PhantomData;
     });
 
     // Retaining the previous assumption
@@ -104,11 +111,12 @@ pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String)
 
     if fpu_present {
         core_peripherals = &[
-            "CBP", "CPUID", "DCB", "DWT", "FPB", "FPU", "ITM", "MPU", "NVIC", "SCB", "SYST", "TPIU"
+            "CBP", "CPUID", "DCB", "DWT", "FPB", "FPU", "ITM", "MPU", "NVIC", "SCB", "SYST",
+            "TPIU",
         ];
     } else {
         core_peripherals = &[
-            "CBP", "CPUID", "DCB", "DWT", "FPB", "ITM", "MPU", "NVIC", "SCB", "SYST", "TPIU"
+            "CBP", "CPUID", "DCB", "DWT", "FPB", "ITM", "MPU", "NVIC", "SCB", "SYST", "TPIU",
         ];
     }
 
@@ -150,7 +158,8 @@ pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String)
             .as_ref()
             .map(|v| &v[..])
             .unwrap_or(&[])
-            .is_empty() && p.derived_from.is_none()
+            .is_empty()
+            && p.derived_from.is_none()
         {
             // No register block will be generated so don't put this peripheral
             // in the `Peripherals` struct
@@ -161,23 +170,44 @@ pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String)
         let id = Ident::new(&*p);
         fields.push(quote! {
             #[doc = #p]
-            pub #id: #id
+            pub #id: (#id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id)
         });
-        exprs.push(quote!(#id: #id { _marker: PhantomData }));
+        exprs.push(quote!(
+            #id: (
+                #id::new(0),
+                #id::new(1),
+                #id::new(2),
+                #id::new(3),
+                #id::new(4),
+                #id::new(5),
+                #id::new(6),
+                #id::new(7),
+                #id::new(8),
+                #id::new(9),
+                #id::new(10),
+                #id::new(11),
+                #id::new(12),
+                #id::new(13),
+                #id::new(14),
+                #id::new(15),
+            )
+        ));
     }
 
     let take = match *target {
         Target::CortexM => Some(Ident::new("cortex_m")),
         Target::Msp430 => Some(Ident::new("msp430")),
         Target::RISCV => Some(Ident::new("riscv")),
+        Target::Ephy => Some(Ident::new("cortex_m")),
         Target::None => None,
-    }.map(|krate| {
+    }
+    .map(|krate| {
         quote! {
             /// Returns all the peripherals *once*
             #[inline]
             pub fn take() -> Option<Self> {
                 #krate::interrupt::free(|_| {
-                    if unsafe { DEVICE_PERIPHERALS } {
+                    if unsafe { DEVICE_PERIPHERALS_EPHY } {
                         None
                     } else {
                         Some(unsafe { Peripherals::steal() })
@@ -195,7 +225,7 @@ pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String)
         // This currently breaks on nightly, to be removed with the line above once 1.31 is stable
         #[allow(private_no_mangle_statics)]
         #[no_mangle]
-        static mut DEVICE_PERIPHERALS: bool = false;
+        static mut DEVICE_PERIPHERALS_EPHY: bool = false;
 
         /// All the peripherals
         #[allow(non_snake_case)]
@@ -208,9 +238,9 @@ pub fn render(d: &Device, target: &Target, nightly: bool, device_x: &mut String)
 
             /// Unchecked version of `Peripherals::take`
             pub unsafe fn steal() -> Self {
-                debug_assert!(!DEVICE_PERIPHERALS);
+                debug_assert!(!DEVICE_PERIPHERALS_EPHY);
 
-                DEVICE_PERIPHERALS = true;
+                DEVICE_PERIPHERALS_EPHY = true;
 
                 Peripherals {
                     #(#exprs,)*

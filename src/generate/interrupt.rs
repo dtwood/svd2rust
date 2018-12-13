@@ -78,7 +78,7 @@ pub fn render(
     match *target {
         Target::CortexM => {
             for name in &names {
-                writeln!(device_x, "PROVIDE({} = DefaultHandler);" ,name).unwrap();
+                writeln!(device_x, "PROVIDE({} = DefaultHandler);", name).unwrap();
             }
 
             root.push(quote! {
@@ -153,6 +153,7 @@ pub fn render(
         }
         Target::RISCV => {}
         Target::None => {}
+        Target::Ephy => {}
     }
 
     let interrupt_enum = quote! {

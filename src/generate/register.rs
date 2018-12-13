@@ -1,8 +1,10 @@
 use cast::u64;
 use either::Either;
 use quote::Tokens;
-use svd::{Access, BitRange, Cluster, Defaults, EnumeratedValues, Field, Peripheral, Register,
-          Usage, WriteConstraint};
+use svd::{
+    Access, BitRange, Cluster, Defaults, EnumeratedValues, Field, Peripheral, Register, Usage,
+    WriteConstraint,
+};
 use syn::Ident;
 
 use errors::*;
@@ -44,15 +46,15 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Modifies the contents of the register
             #[inline]
-            pub fn modify<F>(&self, f: F)
+            pub fn modify<F>(&self, emac0: &mut tm4c129x::EMAC0, f: F)
             where
                 for<'w> F: FnOnce(&R, &'w mut W) -> &'w mut W
             {
-                let bits = self.register.get();
+                let bits = self.register.get(emac0, self.index);
                 let r = R { bits: bits };
                 let mut w = W { bits: bits };
                 f(&r, &mut w);
-                self.register.set(w.bits);
+                self.register.set(emac0, self.index, w.bits);
             }
         });
     }
@@ -61,8 +63,8 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Reads the contents of the register
             #[inline]
-            pub fn read(&self) -> R {
-                R { bits: self.register.get() }
+            pub fn read(&self, emac0: &mut tm4c129x::EMAC0) -> R {
+                R { bits: self.register.get(emac0, self.index) }
             }
         });
 
@@ -86,13 +88,13 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Writes to the register
             #[inline]
-            pub fn write<F>(&self, f: F)
+            pub fn write<F>(&self, emac0: &mut tm4c129x::EMAC0, f: F)
             where
                 F: FnOnce(&mut W) -> &mut W
             {
                 let mut w = W::reset_value();
                 f(&mut w);
-                self.register.set(w.bits);
+                self.register.set(emac0, self.index, w.bits);
             }
         });
 
@@ -129,8 +131,8 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Writes the reset value to the register
             #[inline]
-            pub fn reset(&self) {
-                self.write(|w| w)
+            pub fn reset(&self, emac0: &mut tm4c129x::EMAC0) {
+                self.write(emac0, |w| w)
             }
         })
     }
@@ -186,7 +188,8 @@ pub fn render(
     out.push(quote! {
         #[doc = #description]
         pub struct #name_pc {
-            register: ::vcell::VolatileCell<#rty>
+            pub register: crate::ethernet::EphyReg,
+            pub index: u8,
         }
 
         #[doc = #description]
@@ -313,28 +316,27 @@ pub fn fields(
                 }
 
                 let has_reserved_variant = evs.values.len() != (1 << f.width);
-                let variants = evs.values
+                let variants = evs
+                    .values
                     .iter()
                     // filter out all reserved variants, as we should not
                     // generate code for them
                     .filter(|field| field.name.to_lowercase() != "reserved")
                     .map(|ev| {
-                        let sc =
-                            Ident::new(&*ev.name.to_sanitized_snake_case());
-                        let description = ev.description
+                        let sc = Ident::new(&*ev.name.to_sanitized_snake_case());
+                        let description = ev
+                            .description
                             .as_ref()
                             .map(|s| &**s)
                             .unwrap_or("undocumented");
 
                         let value = u64(ev.value.ok_or_else(|| {
-                            format!("EnumeratedValue {} has no <value> field",
-                                    ev.name)
+                            format!("EnumeratedValue {} has no <value> field", ev.name)
                         })?);
                         Ok(Variant {
                             description,
                             sc,
-                            pc: Ident::new(&*ev.name
-                                           .to_sanitized_upper_case()),
+                            pc: Ident::new(&*ev.name.to_sanitized_upper_case()),
                             value,
                         })
                     })
@@ -529,15 +531,13 @@ pub fn fields(
                     }
                 });
 
-                let mut pc_r_impl_items = vec![
-                    quote! {
-                        /// Value of the field as raw bits
-                        #[inline]
-                        pub fn #bits(&self) -> #fty {
-                            self.bits
-                        }
-                    },
-                ];
+                let mut pc_r_impl_items = vec![quote! {
+                    /// Value of the field as raw bits
+                    #[inline]
+                    pub fn #bits(&self) -> #fty {
+                        self.bits
+                    }
+                }];
 
                 if f.width == 1 {
                     pc_r_impl_items.push(quote! {
@@ -649,31 +649,27 @@ pub fn fields(
                     }
                 });
 
-                let variants = evs.values
+                let variants = evs
+                    .values
                     .iter()
                     // filter out all reserved variants, as we should not
                     // generate code for them
                     .filter(|field| field.name.to_lowercase() != "reserved")
-                    .map(
-                        |ev| {
-                            let value = u64(ev.value.ok_or_else(|| {
-                            format!("EnumeratedValue {} has no `<value>` field",
-                                    ev.name)})?);
+                    .map(|ev| {
+                        let value = u64(ev.value.ok_or_else(|| {
+                            format!("EnumeratedValue {} has no `<value>` field", ev.name)
+                        })?);
 
-                            Ok(Variant {
-                            doc: ev.description
+                        Ok(Variant {
+                            doc: ev
+                                .description
                                 .clone()
-                                .unwrap_or_else(|| {
-                                    format!("`{:b}`", value)
-                                }),
-                            pc: Ident::new(&*ev.name
-                                           .to_sanitized_upper_case()),
-                            sc: Ident::new(&*ev.name
-                                           .to_sanitized_snake_case()),
+                                .unwrap_or_else(|| format!("`{:b}`", value)),
+                            pc: Ident::new(&*ev.name.to_sanitized_upper_case()),
+                            sc: Ident::new(&*ev.name.to_sanitized_snake_case()),
                             value,
                         })
-                        },
-                    )
+                    })
                     .collect::<Result<Vec<_>>>()?;
 
                 if variants.len() == 1 << f.width {
@@ -682,7 +678,9 @@ pub fn fields(
 
                 if base.is_none() {
                     let variants_pc = variants.iter().map(|v| &v.pc);
-                    let variants_doc = variants.iter().map(|v| util::escape_brackets(&v.doc).to_owned());
+                    let variants_doc = variants
+                        .iter()
+                        .map(|v| util::escape_brackets(&v.doc).to_owned());
                     mod_items.push(quote! {
                         #[doc = #pc_w_doc]
                         pub enum #pc_w {
@@ -838,7 +836,8 @@ fn lookup<'a>(
     all_peripherals: &'a [Peripheral],
     usage: Usage,
 ) -> Result<Option<(&'a EnumeratedValues, Option<Base<'a>>)>> {
-    let evs = evs.iter()
+    let evs = evs
+        .iter()
         .map(|evs| {
             if let Some(ref base) = evs.derived_from {
                 let mut parts = base.split('.');
@@ -967,7 +966,8 @@ fn lookup_in_register<'r>(
     let mut matches = vec![];
 
     for f in register.fields.as_ref().map(|v| &**v).unwrap_or(&[]) {
-        if let Some(evs) = f.enumerated_values
+        if let Some(evs) = f
+            .enumerated_values
             .iter()
             .find(|evs| evs.name.as_ref().map(|s| &**s) == Some(base_evs))
         {
@@ -980,26 +980,28 @@ fn lookup_in_register<'r>(
             "EnumeratedValues {} not found in register {}",
             base_evs, register.name
         ))?,
-        Some(&(evs, field)) => if matches.len() == 1 {
-            Ok((
-                evs,
-                Some(Base {
-                    field,
-                    register: None,
-                    peripheral: None,
-                }),
-            ))
-        } else {
-            let fields = matches
-                .iter()
-                .map(|&(ref f, _)| &f.name)
-                .collect::<Vec<_>>();
-            Err(format!(
-                "Fields {:?} have an \
-                 enumeratedValues named {}",
-                fields, base_evs
-            ))?
-        },
+        Some(&(evs, field)) => {
+            if matches.len() == 1 {
+                Ok((
+                    evs,
+                    Some(Base {
+                        field,
+                        register: None,
+                        peripheral: None,
+                    }),
+                ))
+            } else {
+                let fields = matches
+                    .iter()
+                    .map(|&(ref f, _)| &f.name)
+                    .collect::<Vec<_>>();
+                Err(format!(
+                    "Fields {:?} have an \
+                     enumeratedValues named {}",
+                    fields, base_evs
+                ))?
+            }
+        }
     }
 }
 
@@ -1049,9 +1051,11 @@ fn periph_all_registers<'a>(p: &'a Peripheral) -> Vec<&'a Register> {
             Either::Left(ref reg) => {
                 par.push(reg);
             }
-            Either::Right(ref cluster) => for c in cluster.children.iter() {
-                rem.push(c);
-            },
+            Either::Right(ref cluster) => {
+                for c in cluster.children.iter() {
+                    rem.push(c);
+                }
+            }
         }
     }
     par
