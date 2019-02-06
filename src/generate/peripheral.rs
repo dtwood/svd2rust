@@ -19,30 +19,7 @@ pub fn render(
 ) -> Result<Vec<Tokens>> {
     let mut out = vec![];
 
-    let name_pc = Ident::new(&*p.name.to_sanitized_upper_case());
-    let description =
-        util::escape_brackets(util::respace(p.description.as_ref().unwrap_or(&p.name)).as_ref());
-
     let name_sc = Ident::new(&*p.name.to_sanitized_snake_case());
-    let (base, derived) = if let Some(base) = p.derived_from.as_ref() {
-        // TODO Verify that base exists
-        // TODO We don't handle inheritance style `derivedFrom`, we should raise
-        // an error in that case
-        (Ident::new(&*base.to_sanitized_snake_case()), true)
-    } else {
-        (name_sc.clone(), false)
-    };
-
-    // Insert the peripheral structure
-    out.push(quote! {
-        pub type #name_pc = #base::RegisterBlock;
-    });
-
-    // Derived peripherals do not require re-implementation, and will instead
-    // use a single definition of the non-derived version
-    if derived {
-        return Ok(out);
-    }
 
     // erc: *E*ither *R*egister or *C*luster
     let ercs = p.registers.as_ref().map(|x| x.as_ref()).unwrap_or(&[][..]);
@@ -59,7 +36,12 @@ pub fn render(
 
     // Push any register or cluster blocks into the output
     let mut mod_items = vec![];
-    mod_items.push(register_or_cluster_block(ercs, defaults, None, nightly)?);
+    mod_items.push(register_or_cluster_block(
+        ercs,
+        defaults,
+        Some(&*name_sc.to_string()),
+        nightly,
+    )?);
 
     // Push all cluster related information into the peripheral module
     for c in &clusters {
@@ -398,7 +380,6 @@ fn register_or_cluster_block_stable(
         reg_block_field.field.to_tokens(&mut fields);
         Ident::new(",").to_tokens(&mut fields);
 
-        let offset_div_2 = (reg_block_field.offset / 2) as u8;
         let name = reg_block_field.field.ident.as_ref();
         let name_u = Ident::new(
             name.unwrap()
@@ -409,8 +390,7 @@ fn register_or_cluster_block_stable(
 
         ctors.append(quote! {
             #name: #name_u {
-                index,
-                register: crate::ethernet::EphyReg(#offset_div_2),
+                register: vcell::VolatileCell::new(0),
             },
         });
 
@@ -430,7 +410,7 @@ fn register_or_cluster_block_stable(
         }
 
         impl #name {
-            pub fn new(index: u8) -> #name {
+            pub fn new() -> #name {
                 #name {
                     #ctors
                 }

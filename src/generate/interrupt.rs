@@ -154,6 +154,7 @@ pub fn render(
         Target::RISCV => {}
         Target::None => {}
         Target::Ephy => {}
+        Target::Edes => {}
     }
 
     let interrupt_enum = quote! {

@@ -1,9 +1,8 @@
 use quote::Tokens;
 use svd::Device;
-use syn::Ident;
 
 use errors::*;
-use util::{self, ToSanitizedUpperCase};
+use util;
 use Target;
 
 use generate::{interrupt, peripheral};
@@ -83,6 +82,7 @@ pub fn render(
             });
         }
         Target::Ephy => {}
+        Target::Edes => {}
         Target::None => {}
     }
 
@@ -120,8 +120,6 @@ pub fn render(
         ];
     }
 
-    let mut fields = vec![];
-    let mut exprs = vec![];
     if *target == Target::CortexM {
         out.push(quote! {
             pub use cortex_m::peripheral::Peripherals as CorePeripherals;
@@ -153,101 +151,7 @@ pub fn render(
         }
 
         out.extend(peripheral::render(p, &d.peripherals, &d.defaults, nightly)?);
-
-        if p.registers
-            .as_ref()
-            .map(|v| &v[..])
-            .unwrap_or(&[])
-            .is_empty()
-            && p.derived_from.is_none()
-        {
-            // No register block will be generated so don't put this peripheral
-            // in the `Peripherals` struct
-            continue;
-        }
-
-        let p = p.name.to_sanitized_upper_case();
-        let id = Ident::new(&*p);
-        fields.push(quote! {
-            #[doc = #p]
-            pub #id: (#id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id, #id)
-        });
-        exprs.push(quote!(
-            #id: (
-                #id::new(0),
-                #id::new(1),
-                #id::new(2),
-                #id::new(3),
-                #id::new(4),
-                #id::new(5),
-                #id::new(6),
-                #id::new(7),
-                #id::new(8),
-                #id::new(9),
-                #id::new(10),
-                #id::new(11),
-                #id::new(12),
-                #id::new(13),
-                #id::new(14),
-                #id::new(15),
-            )
-        ));
     }
-
-    let take = match *target {
-        Target::CortexM => Some(Ident::new("cortex_m")),
-        Target::Msp430 => Some(Ident::new("msp430")),
-        Target::RISCV => Some(Ident::new("riscv")),
-        Target::Ephy => Some(Ident::new("cortex_m")),
-        Target::None => None,
-    }
-    .map(|krate| {
-        quote! {
-            /// Returns all the peripherals *once*
-            #[inline]
-            pub fn take() -> Option<Self> {
-                #krate::interrupt::free(|_| {
-                    if unsafe { DEVICE_PERIPHERALS_EPHY } {
-                        None
-                    } else {
-                        Some(unsafe { Peripherals::steal() })
-                    }
-                })
-            }
-        }
-    });
-
-    out.push(quote! {
-        // NOTE `no_mangle` is used here to prevent linking different minor versions of the device
-        // crate as that would let you `take` the device peripherals more than once (one per minor
-        // version)
-        #[allow(renamed_and_removed_lints)]
-        // This currently breaks on nightly, to be removed with the line above once 1.31 is stable
-        #[allow(private_no_mangle_statics)]
-        #[no_mangle]
-        static mut DEVICE_PERIPHERALS_EPHY: bool = false;
-
-        /// All the peripherals
-        #[allow(non_snake_case)]
-        pub struct Peripherals {
-            #(#fields,)*
-        }
-
-        impl Peripherals {
-            #take
-
-            /// Unchecked version of `Peripherals::take`
-            pub unsafe fn steal() -> Self {
-                debug_assert!(!DEVICE_PERIPHERALS_EPHY);
-
-                DEVICE_PERIPHERALS_EPHY = true;
-
-                Peripherals {
-                    #(#exprs,)*
-                }
-            }
-        }
-    });
 
     Ok(out)
 }

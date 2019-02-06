@@ -46,15 +46,15 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Modifies the contents of the register
             #[inline]
-            pub fn modify<F>(&self, emac0: &mut tm4c129x::EMAC0, f: F)
+            pub fn modify<F>(&self, f: F)
             where
                 for<'w> F: FnOnce(&R, &'w mut W) -> &'w mut W
             {
-                let bits = self.register.get(emac0, self.index);
+                let bits = self.register.get();
                 let r = R { bits: bits };
                 let mut w = W { bits: bits };
                 f(&r, &mut w);
-                self.register.set(emac0, self.index, w.bits);
+                self.register.set(w.bits);
             }
         });
     }
@@ -63,8 +63,8 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Reads the contents of the register
             #[inline]
-            pub fn read(&self, emac0: &mut tm4c129x::EMAC0) -> R {
-                R { bits: self.register.get(emac0, self.index) }
+            pub fn read(&self) -> R {
+                R { bits: self.register.get() }
             }
         });
 
@@ -88,13 +88,13 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Writes to the register
             #[inline]
-            pub fn write<F>(&self, emac0: &mut tm4c129x::EMAC0, f: F)
+            pub fn write<F>(&self, f: F)
             where
                 F: FnOnce(&mut W) -> &mut W
             {
                 let mut w = W::reset_value();
                 f(&mut w);
-                self.register.set(emac0, self.index, w.bits);
+                self.register.set(w.bits);
             }
         });
 
@@ -131,8 +131,8 @@ pub fn render(
         reg_impl_items.push(quote! {
             /// Writes the reset value to the register
             #[inline]
-            pub fn reset(&self, emac0: &mut tm4c129x::EMAC0) {
-                self.write(emac0, |w| w)
+            pub fn reset(&self) {
+                self.write(|w| w)
             }
         })
     }
@@ -188,8 +188,7 @@ pub fn render(
     out.push(quote! {
         #[doc = #description]
         pub struct #name_pc {
-            pub register: crate::ethernet::EphyReg,
-            pub index: u8,
+            pub register: vcell::VolatileCell<u32>,
         }
 
         #[doc = #description]
